@@ -124,13 +124,13 @@ class base_action_rule(osv.osv):
         """ filter the list record_ids that satisfy the action filter """
         if record_ids:
             domain=[]
+            domain += [('id', 'in', record_ids)]
             for filter_obj in action_filter: 
                 assert action.model == filter_obj.model_id, "Filter model different from action rule model"
                 model = self.pool[filter_obj.model_id]
                 domain += eval(filter_obj.domain)
                 ctx = dict(context or {})
                 ctx.update(eval(filter_obj.context))
-            domain += [('id', 'in', record_ids)]
             record_ids = model.search(cr, uid, domain, context=ctx)
             return record_ids
 
