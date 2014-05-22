@@ -26,7 +26,7 @@ import logging
 import openerp
 from openerp import SUPERUSER_ID
 from openerp.osv import fields, osv
-from openerp.tools import DEFAULT_SERVER_DATETIME_FORMAT
+from openerp.tools import DEFAULT_SERVER_DATETIME_FORMAT,ustr
 
 _logger = logging.getLogger(__name__)
 
@@ -88,14 +88,20 @@ class base_action_rule(osv.osv):
         'server_action_ids': fields.many2many('ir.actions.server', string='Server Actions',
             domain="[('model_id', '=', model_id)]",
             help="Examples: email reminders, call object service, etc."),
-        'filter_pre_id': fields.many2one('ir.filters', string='Before Update Filter',
-            ondelete='restrict',
+        'filter_pre_id': fields.char(string='Before Update Filter',
             domain="[('model_id', '=', model_id.model)]",
             help="If present, this condition must be satisfied before the update of the record."),
-        'filter_id': fields.many2one('ir.filters', string='Filter',
-            ondelete='restrict',
+        'filter_pre_ids': fields.many2many('ir.filters', 'base_action_pre_filter_rel',
+            string='Pre Filters',
+            help="List of  Pre Filters"),
+        'filter_id': fields.char(string='Filter',
             domain="[('model_id', '=', model_id.model)]",
             help="If present, this condition must be satisfied before executing the action rule."),
+                
+        'filter_ids': fields.many2many('ir.filters', 'base_action_filter_rel',
+            string='Filters',
+            domain="[('model_id', '=', model_id.model)]",
+            help="List of Filters"),
         'last_run': fields.datetime('Last Run', readonly=1),
     }
 
@@ -116,14 +122,17 @@ class base_action_rule(osv.osv):
 
     def _filter(self, cr, uid, action, action_filter, record_ids, context=None):
         """ filter the list record_ids that satisfy the action filter """
-        if record_ids and action_filter:
-            assert action.model == action_filter.model_id, "Filter model different from action rule model"
-            model = self.pool[action_filter.model_id]
-            domain = [('id', 'in', record_ids)] + eval(action_filter.domain)
-            ctx = dict(context or {})
-            ctx.update(eval(action_filter.context))
+        if record_ids:
+            domain=[]
+            for filter_obj in action_filter: 
+                assert action.model == filter_obj.model_id, "Filter model different from action rule model"
+                model = self.pool[filter_obj.model_id]
+                domain += eval(filter_obj.domain)
+                ctx = dict(context or {})
+                ctx.update(eval(filter_obj.context))
+            domain += [('id', 'in', record_ids)]
             record_ids = model.search(cr, uid, domain, context=ctx)
-        return record_ids
+            return record_ids
 
     def _process(self, cr, uid, action, record_ids, context=None):
         """ process the given action on the records """
@@ -170,7 +179,7 @@ class base_action_rule(osv.osv):
 
             # check postconditions, and execute actions on the records that satisfy them
             for action in self.browse(cr, uid, action_ids, context=context):
-                if self._filter(cr, uid, action, action.filter_id, [new_id], context=context):
+                if self._filter(cr, uid, action, action.filter_ids, [new_id], context=context):
                     self._process(cr, uid, action, [new_id], context=context)
             return new_id
 
@@ -196,14 +205,14 @@ class base_action_rule(osv.osv):
             # check preconditions
             pre_ids = {}
             for action in actions:
-                pre_ids[action] = self._filter(cr, uid, action, action.filter_pre_id, ids, context=context)
+                pre_ids[action] = self._filter(cr, uid, action, action.filter_pre_ids, ids, context=context)
 
             # execute write
             old_write(cr, uid, ids, vals, context=context)
 
             # check postconditions, and execute actions on the records that satisfy them
             for action in actions:
-                post_ids = self._filter(cr, uid, action, action.filter_id, pre_ids[action], context=context)
+                post_ids = self._filter(cr, uid, action, action.filter_ids, pre_ids[action], context=context)
                 if post_ids:
                     self._process(cr, uid, action, post_ids, context=context)
             return True
@@ -225,7 +234,21 @@ class base_action_rule(osv.osv):
                 model_obj.base_action_ruled = True
         return True
 
+    def _get_challenger_users(self, cr, uid, domain, context=None):
+        filter_domain = eval(ustr(domain))
+        return self.pool['ir.filters'].search(cr, uid, filter_domain, context=context)
+
     def create(self, cr, uid, vals, context=None):
+        if vals.get('filter_id'):
+            filter_ids = self._get_challenger_users(cr, uid, vals.get('filter_id'), context=context)
+            if not vals.get('filter_ids'):
+                vals['filter_ids'] = []
+            vals['filter_ids'] += [(4, filter_id) for filter_id in filter_ids]
+        if vals.get('filter_pre_id'):
+            filter_pre_ids = self._get_challenger_users(cr, uid, vals.get('filter_pre_id'), context=context)
+            if not vals.get('filter_pre_ids'):
+                vals['filter_pre_ids'] = []
+            vals['filter_pre_ids'] += [(4, filter_pre_id) for filter_pre_id in filter_pre_ids]
         res_id = super(base_action_rule, self).create(cr, uid, vals, context=context)
         self._register_hook(cr, [res_id])
         openerp.modules.registry.RegistryManager.signal_registry_change(cr.dbname)
@@ -272,18 +295,17 @@ class base_action_rule(osv.osv):
             model = self.pool[action.model_id.model]
             domain = []
             ctx = dict(context)
-            if action.filter_id:
-                domain = eval(action.filter_id.domain)
-                ctx.update(eval(action.filter_id.context))
+            for filter_obj in action.filter_ids:
+                domain += eval(filter_obj.domain)
+                ctx.update(eval(filter_obj.context))
                 if 'lang' not in ctx:
                     # Filters might be language-sensitive, attempt to reuse creator lang
                     # as we are usually running this as super-user in background
-                    [filter_meta] = action.filter_id.perm_read()
+                    [filter_meta] = filter_obj.perm_read()
                     user_id = filter_meta['write_uid'] and filter_meta['write_uid'][0] or \
                                     filter_meta['create_uid'][0]
                     ctx['lang'] = self.pool['res.users'].browse(cr, uid, user_id).lang
             record_ids = model.search(cr, uid, domain, context=ctx)
-
             # determine when action should occur for the records
             date_field = action.trg_date_id.name
             if date_field == 'date_action_last' and 'create_date' in model._all_columns:

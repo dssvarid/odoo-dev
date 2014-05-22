@@ -29,12 +29,16 @@
                                     <field name="kind" required="1"
                                         on_change="onchange_kind(kind)"/>
                                     <field name="filter_pre_id"
+                                        widget="char_domain" options="{'model': 'ir.filters'}"
                                         domain="[('model_id','=',model), ('user_id', '=', False)]"
                                         context="{'default_model_id': model}"
                                         attrs="{'invisible': [('kind', '!=', 'on_write')]}"/>
+                                    <field name="filter_pre_ids" widget="many2many_tags" attrs="{'invisible': [('kind', '!=', 'on_write')]}"/>/>
                                     <field name="filter_id"
                                         domain="[('model_id','=',model), ('user_id', '=', False)]"
-                                        context="{'default_model_id': model}"/>
+                                        widget="char_domain" options="{'model': 'ir.filters'}"
+                                        context="{'default_model_id': model,'filter_id':filter_id}"/>
+                                    <field name="filter_ids" widget="many2many_tags" />
                                     <field name="trg_date_id"
                                         attrs="{'invisible': [('kind', '!=', 'on_time')], 'required': [('kind', '=', 'on_time')]}"/>
                                     <label for="trg_date_range" string="Delay After Trigger Date"
