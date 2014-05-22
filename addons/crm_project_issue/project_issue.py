@@ -1,4 +1,4 @@
-
+from openerp.addons.crm import crm
 from openerp.osv import osv, fields
 
 
@@ -57,3 +57,13 @@ class crm_lead_to_project_issue_wizard(osv.TransientModel):
             'res_id': issue_id,
             'context': context
         }
+
+class project_issue(osv.Model):
+    _inherit = "project.issue"
+    
+    _columns = {
+        'section_id': fields.many2one('crm.case.section', 'Sales Team', \
+                        select=True, help='Sales team to which Case belongs to.\
+                             Define Responsible user and Email account for mail gateway.'),
+        'channel_id': fields.many2one('crm.case.channel', 'Channel', help="Communication channel."),
+    }
